@@ -1,0 +1,107 @@
+name: Build Android Release APK
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag (e.g. v1.0.0 or latest)'
+        required: false
+        default: 'latest'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      # CHECKOUT SOURCE CODE
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # SET UP JAVA ENVIRONMENT
+      - name: Set Up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      # SET UP FLUTTER ENVIRONMENT
+      - name: Set Up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      # INSTALL FLUTTER DEPENDENCIES
+      - name: Install Dependencies
+        run: flutter pub get
+
+      # VERIFY CODE QUALITY
+      - name: Analyze Project
+        run: flutter analyze
+
+      # BUILD SIGNED RELEASE APK
+      - name: Build Android Release APK
+        run: flutter build apk --release
+
+      # PREPARE NAMED ARTIFACT
+      - name: Rename & Prepare Artifact
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk dist/Vocabrulary.apk
+
+      # UPLOAD APK AS ARTIFACT
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: vocabrulary-release-apk
+          path: dist/Vocabrulary.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      # DETERMINE RELEASE TAG AND NAME
+      - name: Determine Tag and Release Name
+        id: vars
+        if: github.event_name != 'pull_request'
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+            echo "name=Vocabrulary $TAG" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+            echo "name=Vocabrulary $TAG" >> $GITHUB_OUTPUT
+          else
+            echo "tag=latest" >> $GITHUB_OUTPUT
+            echo "name=Vocabrulary (Latest Build)" >> $GITHUB_OUTPUT
+          fi
+
+      # CREATE OR UPDATE GITHUB RELEASE AUTOMATICALLY
+      - name: Create or Update GitHub Release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          name: ${{ steps.vars.outputs.name }}
+          body: ${{ github.event.head_commit.message }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          make_latest: true
+          files: dist/Vocabrulary.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
